@@ -58,9 +58,31 @@ jobs:
           if [ "${{ steps.build.outcome }}" = "success" ]; then
             VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n1)
             TAG="v${VERSION}"
+            
+            # Create GitHub Release via REST API
+            GH_API="https://api.github.com/repos/AltafYafai/attendance-app-releases"
+            curl -s -X POST \
+              -H "Authorization: token ${RELEASE_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -d "{\"tag_name\": \"${TAG}\", \"name\": \"${TAG}\", \"body\": \"Release build from CI\"}" \
+              "${GH_API}/releases" > /dev/null 2>&1 || true
+            
+            # Upload APK to release
+            RELEASE_ID=$(curl -s -H "Authorization: token ${RELEASE_TOKEN}" \
+              "${GH_API}/releases/tags/${TAG}" | grep -oP '"id":\s*\K[0-9]+' | head -1)
+            
+            if [ -n "${RELEASE_ID}" ]; then
+              curl -s -X POST \
+                -H "Authorization: token ${RELEASE_TOKEN}" \
+                -H "Content-Type: application/octet-stream" \
+                -H "Content-Disposition: attachment; filename=attendance-app-${TAG}.apk" \
+                --data-binary "@app/build/outputs/apk/release/app-release.apk" \
+                "${GH_API}/releases/${RELEASE_ID}/assets?name=attendance-app-${TAG}.apk" > /dev/null 2>&1 || true
+            fi
+            
             curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               -d chat_id="${TG_CHAT}" \
-              -d text="Release Build Succeeded - ${TAG}"
+              -d text="Release Build Succeeded - ${TAG} (APK uploaded to GitHub Release)"
           else
             curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               -d chat_id="${TG_CHAT}" \
