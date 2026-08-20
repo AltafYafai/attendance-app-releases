@@ -4,9 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 1.4.0). Leave empty to use version from app/build.gradle.kts'
+        description: 'Release version (e.g. 1.5.0)'
         required: false
         type: string
+  repository_dispatch:
+    types: [build_from_private]
 
 jobs:
   release:
@@ -15,24 +17,21 @@ jobs:
       TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
-      - name: Checkout private repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: AltafYafai/attendance-app
-          ref: 'main'
+          ref: main
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           fetch-depth: 0
 
-      - name: Notify build started
-        if: env.TG_TOKEN != '' && env.TG_CHAT != ''
+      - name: Send Build Started Message
         run: |
-          MSG=$(git log -1 --pretty=format:"%s" 2>/dev/null || echo "manual")
-          HASH=$(git log -1 --pretty=format:"%h" 2>/dev/null || echo "N/A")
-          URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          TEXT=$(printf "🔄 Build Started: %s@%s\nCommit: %s - %s\n%s" \
-            "${{ github.repository }}" "${{ github.ref_name }}" "$HASH" "$MSG" "$URL")
           curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d chat_id="${TG_CHAT}" -d text="${TEXT}" -d disable_web_page_preview=true > /dev/null
+            -d chat_id="${TG_CHAT}" \
+            -d text="🚀 *Release Build Started*
+            
+📦 Version: _auto_
+🏃 Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -42,111 +41,48 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Notify environment ready
-        if: env.TG_TOKEN != '' && env.TG_CHAT != ''
-        run: |
-          TEXT=$(printf "⚙️ Environment Ready\nJDK 17 + Gradle configured\n%s" \
-            "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}")
-          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d chat_id="${TG_CHAT}" -d text="${TEXT}" -d disable_web_page_preview=true > /dev/null
-
-      - name: Decode keystore
-        run: printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
-
-      - name: Notify keystore ready
-        if: env.TG_TOKEN != '' && env.TG_CHAT != ''
-        run: |
-          TEXT=$(printf "🔑 Keystore Decoded\nRelease signing configured")
-          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d chat_id="${TG_CHAT}" -d text="${TEXT}" -d disable_web_page_preview=true > /dev/null
-
-      - name: Determine release version
-        id: version
-        run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-            echo "tag=v${{ inputs.version }}" >> $GITHUB_OUTPUT
-            # Dynamically update app/build.gradle.kts to compile with the manual release version
-            sed -i -E 's/(versionName\s*=\s*")[^"]+(")/\1${{ inputs.version }}\2/' app/build.gradle.kts
-            # Also auto-increment versionCode to ensure Android updates correctly
-            CURR_CODE=$(grep "versionCode =" app/build.gradle.kts | head -n1 | sed -E 's/[^0-9]//g')
-            if [ -n "$CURR_CODE" ]; then
-              NEW_CODE=$((CURR_CODE + 1))
-              sed -i -E "s/(versionCode\s*=\s*)[0-9]+/\1$NEW_CODE/" app/build.gradle.kts
-            fi
-            echo "Building with updated build.gradle.kts:"
-            grep -E "versionCode =|versionName =" app/build.gradle.kts
-          else
-            GRADLE_VERSION=$(grep "versionName =" app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
-            if [ -n "$GRADLE_VERSION" ]; then
-              echo "version=$GRADLE_VERSION" >> $GITHUB_OUTPUT
-              echo "tag=v$GRADLE_VERSION" >> $GITHUB_OUTPUT
-            else
-              TIMESTAMP=$(date -u +%Y.%m.%d.%H%M)
-              echo "version=$TIMESTAMP" >> $GITHUB_OUTPUT
-              echo "tag=v$TIMESTAMP" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-      - name: Notify build in progress
-        if: env.TG_TOKEN != '' && env.TG_CHAT != ''
-        run: |
-          TEXT=$(printf "🔨 Building Release APK\nRunning ./gradlew assembleRelease...")
-          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d chat_id="${TG_CHAT}" -d text="${TEXT}" -d disable_web_page_preview=true > /dev/null
-
       - name: Build Release APK
         id: build
         env:
-          KEYSTORE_FILE: release.keystore
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
           chmod +x gradlew
           ./gradlew assembleRelease 2>&1 | tee build.log
           exit ${PIPESTATUS[0]}
 
-      - name: Rename APK
-        if: steps.build.outcome == 'success'
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          echo "apk_name=attendance-app-${VERSION}.apk" >> $GITHUB_ENV
-          cp app/build/outputs/apk/release/app-release.apk "attendance-app-${VERSION}.apk"
-
-      - name: Create GitHub Release on public repo
-        if: steps.build.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          gh release delete "$TAG" --yes --repo AltafYafai/attendance-app-releases --cleanup-tag || true
-          gh release create "$TAG" \
-            --repo AltafYafai/attendance-app-releases \
-            --title "$TAG" \
-            --notes-file CHANGELOG.md \
-            "${{ env.apk_name }}"
-
-      - name: Telegram final result
+      - name: Send Final Result
         if: always()
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
-            exit 0
-          fi
-          URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          if [ "${{ steps.build.outcome }}" = "success" ] && [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            MSG=$(git log -1 --pretty=format:"%s" 2>/dev/null || echo "manual")
-            TAG="${{ steps.version.outputs.tag }}"
-            CAPTION=$(printf "✅ Release Build Succeeded: %s\n%s\n%s" "$TAG" "$MSG" "$URL")
-            curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendDocument" \
-              -F chat_id="${TG_CHAT}" \
-              -F document=@"${{ env.apk_name }}" \
-              -F caption="${CAPTION}" > /dev/null
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            TAG="v$(grep versionName app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
+            
+            gh release create "$TAG" \
+              --repo AltafYafai/attendance-app-releases \
+              --title "$TAG" \
+              --notes "Release build from CI" \
+              app/build/outputs/apk/release/app-release.apk
+            
+            TEXT="✅ *Release Build Succeeded*
+            
+🎉 Version: *$TAG*
+📱 APK attached to Release tab
+🔗 Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           else
-            LOG=$(tail -30 build.log 2>/dev/null || echo "No log available")
-            TEXT=$(printf "❌ Release Build Failed: %s@%s\n%s\n%s" \
-              "${{ github.repository }}" "${{ github.ref_name }}" "$LOG" "$URL")
-            curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-              -d chat_id="${TG_CHAT}" \
-              -d text="${TEXT}" > /dev/null
+            LOG=$(tail -30 build.log 2>/dev/null || echo "Build failed")
+            TEXT="❌ *Release Build Failed*
+            
+📝 Error:
+\`\`\`
+$LOG
+\`\`\`
+🔗 Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           fi
+          
+          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="$TEXT"
