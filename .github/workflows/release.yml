@@ -10,12 +10,16 @@ on:
   repository_dispatch:
     types: [build_from_private]
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
     env:
       TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,29 +56,30 @@ jobs:
 
       - name: Send Final Result
         if: always()
-        env:
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           if [ "${{ steps.build.outcome }}" = "success" ]; then
             VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n1)
             TAG="v${VERSION}"
             APK_PATH="app/build/outputs/apk/release/app-release.apk"
+            GH_API="https://api.github.com/repos/AltafYafai/attendance-app-releases"
             
             # Create GitHub Release via REST API
-            GH_API="https://api.github.com/repos/AltafYafai/attendance-app-releases"
             curl -s -X POST \
-              -H "Authorization: token ${RELEASE_TOKEN}" \
+              -H "Authorization: token ${GH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -d "{\"tag_name\": \"${TAG}\", \"name\": \"${TAG}\", \"body\": \"Release build from CI\"}" \
-              "${GH_API}/releases" > /dev/null 2>&1 || true
+              "${GH_API}/releases" > release_response.json 2>&1 || true
             
             # Upload APK to GitHub Release
-            RELEASE_ID=$(curl -s -H "Authorization: token ${RELEASE_TOKEN}" \
-              "${GH_API}/releases/tags/${TAG}" 2>/dev/null | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
+            RELEASE_ID=$(python3 -c "import sys,json; print(json.load(open('release_response.json')).get('id',0))" 2>/dev/null || echo "0")
+            if [ "${RELEASE_ID}" = "0" ]; then
+              RELEASE_ID=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+                "${GH_API}/releases/tags/${TAG}" 2>/dev/null | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
+            fi
             
-            if [ "${RELEASE_ID}" != "0" ] && [ -n "${RELEASE_ID}" ]; then
+            if [ "${RELEASE_ID}" != "0" ]; then
               curl -s -X POST \
-                -H "Authorization: token ${RELEASE_TOKEN}" \
+                -H "Authorization: token ${GH_TOKEN}" \
                 -H "Content-Type: application/octet-stream" \
                 -H "Content-Disposition: attachment; filename=attendance-app-${TAG}.apk" \
                 --data-binary "@${APK_PATH}" \
