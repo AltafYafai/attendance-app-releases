@@ -75,9 +75,9 @@ jobs:
           TAG="v${VERSION}"
           APK_PATH="app/build/outputs/apk/release/app-release.apk"
           GH_API="https://api.github.com/repos/AltafYafai/attendance-app-releases"
+          UPLOAD_API="https://uploads.github.com/repos/AltafYafai/attendance-app-releases"
           echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
           echo "APK_PATH=$APK_PATH" >> "$GITHUB_OUTPUT"
-          echo "GH_API=$GH_API" >> "$GITHUB_OUTPUT"
           
           # Try to create release
           RESP=$(curl -s -X POST \
@@ -85,24 +85,23 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -d "{\"tag_name\": \"${TAG}\", \"name\": \"${TAG}\", \"body\": \"Release build from CI\"}" \
             "${GH_API}/releases")
-          echo "CREATE_RESP: $RESP"
           
           RELEASE_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
           if [ "${RELEASE_ID}" = "0" ]; then
             # Release may already exist - get its id
             RELEASE_ID=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
               "${GH_API}/releases/tags/${TAG}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
-            echo "EXISTING_RELEASE_ID: $RELEASE_ID"
           fi
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_OUTPUT"
           
           if [ "${RELEASE_ID}" != "0" ]; then
+            # Upload APK to release asset (use uploads.github.com endpoint)
             UPLOAD_RESP=$(curl -s -X POST \
               -H "Authorization: token ${GH_TOKEN}" \
               -H "Content-Type: application/octet-stream" \
               -H "Content-Disposition: attachment; filename=attendance-app-${TAG}.apk" \
               --data-binary "@${APK_PATH}" \
-              "${GH_API}/releases/${RELEASE_ID}/assets?name=attendance-app-${TAG}.apk")
+              "${UPLOAD_API}/releases/${RELEASE_ID}/assets?name=attendance-app-${TAG}.apk")
             echo "UPLOAD_RESP: $UPLOAD_RESP"
           fi
 
