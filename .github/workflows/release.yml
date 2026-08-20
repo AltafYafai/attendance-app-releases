@@ -28,10 +28,7 @@ jobs:
         run: |
           curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             -d chat_id="${TG_CHAT}" \
-            -d text="🚀 *Release Build Started*
-            
-📦 Version: _auto_
-🏃 Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            -d text="Release Build Started - Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -59,30 +56,12 @@ jobs:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           if [ "${{ steps.build.outcome }}" = "success" ]; then
-            TAG="v$(grep versionName app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')"
-            
-            gh release create "$TAG" \
-              --repo AltafYafai/attendance-app-releases \
-              --title "$TAG" \
-              --notes "Release build from CI" \
-              app/build/outputs/apk/release/app-release.apk
-            
-            TEXT="✅ *Release Build Succeeded*
-            
-🎉 Version: *$TAG*
-📱 APK attached to Release tab
-🔗 Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            TAG="v$(grep versionName app/build.gradle.kts | head -n1 | sed -E 's/.*"\([^"]*\)".*/\1/')"
+            curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              -d chat_id="${TG_CHAT}" \
+              -d text="Release Build Succeeded - v${TAG}"
           else
-            LOG=$(tail -30 build.log 2>/dev/null || echo "Build failed")
-            TEXT="❌ *Release Build Failed*
-            
-📝 Error:
-\`\`\`
-$LOG
-\`\`\`
-🔗 Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              -d chat_id="${TG_CHAT}" \
+              -d text="Release Build Failed"
           fi
-          
-          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d chat_id="${TG_CHAT}" \
-            -d text="$TEXT"
