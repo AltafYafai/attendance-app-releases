@@ -20,6 +20,7 @@ jobs:
       TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      PRIVATE_REPO_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
     steps:
       - name: Determine branch
         id: branch
@@ -78,24 +79,71 @@ jobs:
           UPLOAD_API="https://uploads.github.com/repos/AltafYafai/attendance-app-releases"
           echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
           echo "APK_PATH=$APK_PATH" >> "$GITHUB_OUTPUT"
-          
-          # Try to create release
+
+          # Baseline tag (private repo) for changelog
+          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -n1)
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -n1)
+          fi
+          export PREV_TAG
+
+          # Generate changelog from commit messages since previous tag
+          python3 - <<'PY'
+          import subprocess, os
+          prev = os.environ.get("PREV_TAG", "")
+          try:
+              out = subprocess.check_output(["git", "log", f"{prev}..HEAD", "--pretty=format:%s|%h"], text=True).strip()
+          except Exception:
+              out = ""
+          feats = []
+          fixes = []
+          other = []
+          for line in out.splitlines():
+              if not line.strip():
+                  continue
+              parts = line.split("|", 1)
+              subj = parts[0]
+              h = parts[1] if len(parts) > 1 else ""
+              low = subj.lower()
+              if low.startswith("feat"):
+                  feats.append((subj, h))
+              elif low.startswith("fix"):
+                  fixes.append((subj, h))
+              else:
+                  other.append((subj, h))
+          lines = ["## What's Changed"]
+          if feats:
+              lines.append("### Features")
+              lines += [f"- {s} ({h})" for s, h in feats]
+          if fixes:
+              lines.append("### Fixes")
+              lines += [f"- {s} ({h})" for s, h in fixes]
+          if other:
+              lines.append("### Other")
+              lines += [f"- {s} ({h})" for s, h in other]
+          if len(lines) == 1:
+              lines.append("- Maintenance and improvements")
+          open("/tmp/body.txt", "w").write("\n".join(lines))
+          PY
+
+          # Create release with generated body
           RESP=$(curl -s -X POST \
             -H "Authorization: token ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            -d "{\"tag_name\": \"${TAG}\", \"name\": \"${TAG}\", \"body\": \"Release build from CI\"}" \
+            -d "$(python3 -c "import json; print(json.dumps({'tag_name': '$TAG', 'name': '$TAG', 'body': open('/tmp/body.txt').read()}))")" \
             "${GH_API}/releases")
-          
           RELEASE_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
           if [ "${RELEASE_ID}" = "0" ]; then
-            # Release may already exist - get its id
-            RELEASE_ID=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
-              "${GH_API}/releases/tags/${TAG}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
+            RELEASE_ID=$(curl -s -H "Authorization: token ${GH_TOKEN}" "${GH_API}/releases/tags/${TAG}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
+            if [ "${RELEASE_ID}" != "0" ]; then
+              curl -s -X PATCH -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+                -d "$(python3 -c "import json; print(json.dumps({'body': open('/tmp/body.txt').read()}))")" \
+                "${GH_API}/releases/${RELEASE_ID}" >/dev/null
+            fi
           fi
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_OUTPUT"
-          
+
           if [ "${RELEASE_ID}" != "0" ]; then
-            # Upload APK to release asset (use uploads.github.com endpoint)
             UPLOAD_RESP=$(curl -s -X POST \
               -H "Authorization: token ${GH_TOKEN}" \
               -H "Content-Type: application/octet-stream" \
@@ -103,6 +151,14 @@ jobs:
               --data-binary "@${APK_PATH}" \
               "${UPLOAD_API}/releases/${RELEASE_ID}/assets?name=attendance-app-${TAG}.apk")
             echo "UPLOAD_RESP: $UPLOAD_RESP"
+          fi
+
+          # Tag private repo (best-effort) for future changelog baselines
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git config user.email "ci@users.noreply.github.com"
+            git config user.name "CI"
+            git tag -a "$TAG" -m "$TAG"
+            git push "https://x-access-token:${PRIVATE_REPO_TOKEN}@github.com/AltafYafai/attendance-app.git" "$TAG" || echo "tag push skipped"
           fi
 
       - name: Send Final Result
