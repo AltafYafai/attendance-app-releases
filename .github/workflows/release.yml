@@ -113,13 +113,13 @@ jobs:
                   other.append((subj, h))
           lines = ["## What's Changed"]
           if feats:
-              lines.append("### Features")
+              lines.append("## Features")
               lines += [f"- {s} ({h})" for s, h in feats]
           if fixes:
-              lines.append("### Fixes")
+              lines.append("## Fixes")
               lines += [f"- {s} ({h})" for s, h in fixes]
           if other:
-              lines.append("### Other")
+              lines.append("## Other")
               lines += [f"- {s} ({h})" for s, h in other]
           if len(lines) == 1:
               lines.append("- Maintenance and improvements")
