@@ -87,43 +87,37 @@ jobs:
           fi
           export PREV_TAG
 
-          # Generate changelog from commit messages since previous tag
+          # Generate changelog from the CHANGELOG.md entry for this version
           python3 - <<'PY'
-          import subprocess, os
-          prev = os.environ.get("PREV_TAG", "")
-          try:
-              out = subprocess.check_output(["git", "log", f"{prev}..HEAD", "--pretty=format:%s|%h"], text=True).strip()
-          except Exception:
-              out = ""
-          feats = []
-          fixes = []
-          other = []
-          for line in out.splitlines():
-              if not line.strip():
-                  continue
-              parts = line.split("|", 1)
-              subj = parts[0]
-              h = parts[1] if len(parts) > 1 else ""
-              low = subj.lower()
-              if low.startswith("feat"):
-                  feats.append((subj, h))
-              elif low.startswith("fix"):
-                  fixes.append((subj, h))
-              else:
-                  other.append((subj, h))
-          lines = ["## What's Changed"]
-          if feats:
-              lines.append("## Features")
-              lines += [f"- {s} ({h})" for s, h in feats]
-          if fixes:
-              lines.append("## Fixes")
-              lines += [f"- {s} ({h})" for s, h in fixes]
-          if other:
-              lines.append("## Other")
-              lines += [f"- {s} ({h})" for s, h in other]
-          if len(lines) == 1:
-              lines.append("- Maintenance and improvements")
-          open("/tmp/body.txt", "w").write("\n".join(lines))
+          import os, re, subprocess
+          tag = os.environ.get("TAG", "")
+          version = tag.lstrip("vV")
+          body = ""
+          if os.path.exists("CHANGELOG.md"):
+              try:
+                  text = open("CHANGELOG.md", encoding="utf-8").read()
+                  pat = re.compile(r'^##\s*\[?' + re.escape(version) + r'\]?(?=\s|$)', re.MULTILINE)
+                  m = pat.search(text)
+                  if m:
+                      after = text[m.end():]
+                      nl = after.find("\n")
+                      if nl != -1:
+                          after = after[nl + 1:]
+                      nxt = re.search(r'\n##\s', after)
+                      end = nxt.start() if nxt else len(after)
+                      body = after[:end].strip()
+              except Exception:
+                  body = ""
+          # Fallback: build from commit messages if no CHANGELOG entry exists
+          if not body:
+              prev = os.environ.get("PREV_TAG", "")
+              try:
+                  out = subprocess.check_output(["git", "log", f"{prev}..HEAD", "--pretty=format:%s"], text=True).strip()
+              except Exception:
+                  out = ""
+              items = [l for l in out.splitlines() if l.strip()]
+              body = "\n".join(f"- {l}" for l in items) if items else "- Bug fixes and improvements"
+          open("/tmp/body.txt", "w").write(body)
           PY
 
           # Create release with generated body
