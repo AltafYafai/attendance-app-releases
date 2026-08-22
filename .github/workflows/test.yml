@@ -7,6 +7,11 @@ on:
         description: 'Branch of private repo to test'
         required: false
         default: 'main'
+      skip_device_test:
+        description: 'Skip the slow emulator (instrumentation) device test'
+        required: false
+        default: false
+        type: boolean
   repository_dispatch:
     types: [ build_from_private ]
 
@@ -68,6 +73,7 @@ jobs:
 
   device-test:
     needs: unit-test
+    if: ${{ inputs.skip_device_test != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
