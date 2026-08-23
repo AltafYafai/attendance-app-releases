@@ -28,7 +28,7 @@ jobs:
           if [ -n "${{ github.event.client_payload.branch }}" ]; then
             echo "branch=${{ github.event.client_payload.branch }}" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "branch=feature" >> "$GITHUB_OUTPUT"
           else
             echo "branch=main" >> "$GITHUB_OUTPUT"
           fi

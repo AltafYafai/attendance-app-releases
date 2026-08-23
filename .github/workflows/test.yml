@@ -6,7 +6,7 @@ on:
       branch:
         description: 'Branch of private repo to test'
         required: false
-        default: 'main'
+        default: 'feature'
       skip_device_test:
         description: 'Skip the slow emulator (instrumentation) device test'
         required: false
