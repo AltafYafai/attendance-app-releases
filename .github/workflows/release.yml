@@ -120,32 +120,61 @@ jobs:
           open("/tmp/body.txt", "w").write(body)
           PY
 
-          # Create release with generated body
-          RESP=$(curl -s -X POST \
+          # Create or update the release. Only a verified 404 may start a new release.
+          set +e
+          RELEASE_STATUS=$(curl --fail-with-body -sS -o /tmp/existing-release.json -w '%{http_code}' \
             -H "Authorization: token ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            -d "$(python3 -c "import json; print(json.dumps({'tag_name': '$TAG', 'name': '$TAG', 'body': open('/tmp/body.txt').read()}))")" \
-            "${GH_API}/releases")
-          RELEASE_ID=$(echo "$RESP" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
-          if [ "${RELEASE_ID}" = "0" ]; then
-            RELEASE_ID=$(curl -s -H "Authorization: token ${GH_TOKEN}" "${GH_API}/releases/tags/${TAG}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('id',0))" 2>/dev/null || echo "0")
-            if [ "${RELEASE_ID}" != "0" ]; then
-              curl -s -X PATCH -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
-                -d "$(python3 -c "import json; print(json.dumps({'body': open('/tmp/body.txt').read()}))")" \
-                "${GH_API}/releases/${RELEASE_ID}" >/dev/null
-            fi
+            "${GH_API}/releases/tags/${TAG}")
+          RELEASE_CURL_STATUS=$?
+          set -e
+          if [ "$RELEASE_CURL_STATUS" -ne 0 ] && [ "$RELEASE_STATUS" != "404" ]; then
+            echo "Unable to query release ${TAG} (HTTP ${RELEASE_STATUS})" >&2
+            cat /tmp/existing-release.json >&2
+            exit 1
           fi
+          RELEASE_ID="0"
+          if [ "$RELEASE_STATUS" = "200" ]; then
+            RELEASE_ID=$(python3 -c "import json; print(json.load(open('/tmp/existing-release.json'))['id'])")
+          fi
+          RELEASE_PAYLOAD=$(python3 -c "import json; print(json.dumps({'tag_name': '$TAG', 'name': '$TAG', 'body': open('/tmp/body.txt').read()}))")
+          if [ "${RELEASE_ID}" = "0" ]; then
+            RESP=$(curl --fail-with-body -sS -X POST \
+              -H "Authorization: token ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -d "$RELEASE_PAYLOAD" \
+              "${GH_API}/releases")
+            RELEASE_ID=$(printf '%s' "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          else
+            curl --fail-with-body -sS -X PATCH \
+              -H "Authorization: token ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -d "$RELEASE_PAYLOAD" \
+              "${GH_API}/releases/${RELEASE_ID}" >/dev/null
+          fi
+          [ "${RELEASE_ID}" != "0" ] || { echo "Unable to create or locate release ${TAG}" >&2; exit 1; }
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_OUTPUT"
 
-          if [ "${RELEASE_ID}" != "0" ]; then
-            UPLOAD_RESP=$(curl -s -X POST \
+          # Replace any same-name asset so rebuilds never report success while serving a stale APK.
+          ASSET_NAME="attendance-app-${TAG}.apk"
+          EXISTING_ASSET_ID=$(curl --fail-with-body -sS \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GH_API}/releases/${RELEASE_ID}/assets?per_page=100" | \
+            python3 -c 'import sys,json; name=sys.argv[1]; asset=next((item for item in json.load(sys.stdin) if item["name"] == name), None); print(asset["id"] if asset else "")' "$ASSET_NAME")
+          if [ -n "$EXISTING_ASSET_ID" ]; then
+            curl --fail-with-body -sS -X DELETE \
               -H "Authorization: token ${GH_TOKEN}" \
-              -H "Content-Type: application/octet-stream" \
-              -H "Content-Disposition: attachment; filename=attendance-app-${TAG}.apk" \
-              --data-binary "@${APK_PATH}" \
-              "${UPLOAD_API}/releases/${RELEASE_ID}/assets?name=attendance-app-${TAG}.apk")
-            echo "UPLOAD_RESP: $UPLOAD_RESP"
+              -H "Accept: application/vnd.github+json" \
+              "${GH_API}/releases/assets/${EXISTING_ASSET_ID}"
           fi
+          curl --fail-with-body -sS --retry 3 --retry-all-errors -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            -H "Content-Disposition: attachment; filename=${ASSET_NAME}" \
+            --data-binary "@${APK_PATH}" \
+            "${UPLOAD_API}/releases/${RELEASE_ID}/assets?name=${ASSET_NAME}" >/dev/null
+          echo "Uploaded ${ASSET_NAME} to release ${TAG}"
 
           # Tag private repo (best-effort) for future changelog baselines
           if ! git rev-parse "$TAG" >/dev/null 2>&1; then
@@ -158,7 +187,7 @@ jobs:
       - name: Send Final Result
         if: always()
         run: |
-          if [ "${{ steps.build.outcome }}" = "success" ]; then
+          if [ "${{ steps.build.outcome }}" = "success" ] && [ "${{ steps.ghrelease.outcome }}" = "success" ]; then
             TAG="${{ steps.ghrelease.outputs.TAG }}"
             APK_PATH="${{ steps.ghrelease.outputs.APK_PATH }}"
             curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendDocument" \
@@ -168,5 +197,5 @@ jobs:
           else
             curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               -d chat_id="${TG_CHAT}" \
-              -d text="Release Build Failed"
+              -d text="Release pipeline failed - Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           fi
