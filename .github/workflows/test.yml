@@ -23,7 +23,7 @@ jobs:
       TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - name: Checkout private repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: AltafYafai/attendance-app
           ref: ${{ github.event.inputs.branch || github.event.client_payload.branch || 'main' }}
@@ -38,12 +38,12 @@ jobs:
             -d text="🧪 Unit Test Build Started - Branch: ${{ github.event.inputs.branch || github.event.client_payload.branch || 'main' }}%0Ahttps://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Run Unit Tests
         id: test
@@ -81,7 +81,7 @@ jobs:
       TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - name: Checkout private repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: AltafYafai/attendance-app
           ref: ${{ github.event.inputs.branch || github.event.client_payload.branch || 'main' }}
@@ -95,12 +95,12 @@ jobs:
           rm -rf app-src
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Enable KVM
         run: |

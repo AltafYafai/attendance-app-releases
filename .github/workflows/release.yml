@@ -33,7 +33,7 @@ jobs:
             echo "branch=main" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: AltafYafai/attendance-app
           ref: ${{ steps.branch.outputs.branch }}
@@ -49,12 +49,12 @@ jobs:
           BRANCH: ${{ steps.branch.outputs.branch }}
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Build Release APK
         id: build
